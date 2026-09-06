@@ -37,13 +37,21 @@ jobs:
           done
           ls -l dist/*.tar.gz
 
+      # Tag push publishes; a manual run is a dry run that just keeps the
+      # tarballs as run artifacts, so the build can be checked without
+      # cutting a release.
       - name: Publish release
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${GITHUB_REF_NAME}"
-          [ "${{ github.ref_type }}" = tag ] || tag="dev-$(date +%Y%m%d-%H%M%S)"
-          gh release create "$tag" dist/*.tar.gz \
-            --title "$tag" \
-            --generate-notes \
-            --target "$GITHUB_SHA"
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+
+      - name: Upload tarballs (dry run)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: gomon-tarballs
+          path: dist/*.tar.gz

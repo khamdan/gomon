@@ -109,6 +109,9 @@ git tag v1.0.0 && git push --tags
 Asset names carry no version (`gomon-linux-arm64.tar.gz`), which is what keeps
 the `releases/latest/download/` URL above working forever.
 
+Running the workflow by hand from the Actions tab is a **dry run**: it builds
+both tarballs and attaches them to the run without creating a release.
+
 ---
 
 ## gomonctl
