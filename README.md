@@ -6,7 +6,7 @@ A single-binary resource monitor for tiny Linux boxes, written to run on a
 `6.12.1-msm8916` kernel.
 
 It exists because nginx + PHP + a database is a lot of machine for a board with
-376 MB of RAM. `gomon` is one **4.6 MB static binary** with the dashboard
+376 MB of RAM. `gomon` is one **5.2 MB static binary** with the dashboard
 embedded in it, and it sits at about **9.5 MB RSS**. No web server, no runtime,
 no database, no cgo, and **no third-party Go modules** — everything comes from
 the standard library.
