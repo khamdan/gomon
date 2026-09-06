@@ -12,7 +12,11 @@
 set -euo pipefail
 
 SERVICE=gomon
-PORT=8080
+# Read the port back out of the installed unit - install.sh bakes the chosen
+# one into ExecStart, so this stays right whatever port was picked.
+# The "|| true" matters: under `set -e` a missing unit would abort the script.
+PORT=$(systemctl cat gomon 2>/dev/null | sed -n 's/.*-listen :\([0-9]\{1,5\}\).*/\1/p' | head -1 || true)
+PORT=${PORT:-8080}
 SRC="$HOME/gomon"
 BIN=/usr/local/bin/gomon
 

@@ -28,7 +28,28 @@ That drops the binary and `gomonctl` in `/usr/local/bin`, installs the systemd
 unit, **enables it at boot and starts it now**, then prints the URL to open —
 `http://<device-ip>:8080`.
 
-Use `gomon-linux-amd64.tar.gz` on a normal PC. To remove it again:
+Use `gomon-linux-amd64.tar.gz` on a normal PC.
+
+### A different port
+
+Pass it as the only argument:
+
+```bash
+sudo gomon-linux-arm64/install.sh 9090
+```
+
+The port is baked into the unit's `ExecStart` as it is installed, so it
+survives reboots with no extra config file.
+
+Ports **below 1024** work too. They are privileged and the service runs as
+`nobody`, so the installer adds `AmbientCapabilities=CAP_NET_BIND_SERVICE` to
+the unit for you — the narrow grant that allows the bind and nothing else:
+
+```bash
+sudo gomon-linux-arm64/install.sh 80
+```
+
+### Removing it
 
 ```bash
 sudo gomon-linux-arm64/install.sh uninstall
@@ -124,10 +145,11 @@ gomonctl start | stop | restart | status | enable | disable | logs | rebuild
 
 `enable` turns on start-at-boot *and* starts it now; `disable` mirrors that.
 `status` prints the URL someone on the LAN would actually type, derived from
-`ip -4 -o addr`. Rather than sleeping a fixed amount after starting, it polls
-`/api/stats` until the server answers — the board is slow enough that a flat
-`sleep 1` is wrong in both directions. `rebuild` expects the source in `~/gomon`
-and is the only verb that does nothing on a binary-only install.
+`ip -4 -o addr`, on whatever port the installed unit says. Rather than sleeping
+a fixed amount after starting, it polls `/api/stats` until the server answers —
+the board is slow enough that a flat `sleep 1` is wrong in both directions.
+`rebuild` expects the source in `~/gomon`, and is the only verb that does
+nothing on a binary-only install.
 
 ---
 
