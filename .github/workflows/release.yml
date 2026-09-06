@@ -1,0 +1,46 @@
+name: release
+
+# Tag and push to cut a release:  git tag v1.0.0 && git push --tags
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      # Asset names carry no version, so the /releases/latest/download/ URLs
+      # in the README keep working across releases.
+      - name: Build tarballs
+        run: |
+          set -eux
+          for arch in arm64 amd64; do
+            out="dist/gomon-linux-$arch"
+            mkdir -p "$out"
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -trimpath -ldflags='-s -w' -o "$out/gomon" .
+            cp gomon.service gomonctl install.sh "$out/"
+            tar -C dist -czf "dist/gomon-linux-$arch.tar.gz" "gomon-linux-$arch"
+          done
+          ls -l dist/*.tar.gz
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          [ "${{ github.ref_type }}" = tag ] || tag="dev-$(date +%Y%m%d-%H%M%S)"
+          gh release create "$tag" dist/*.tar.gz \
+            --title "$tag" \
+            --generate-notes \
+            --target "$GITHUB_SHA"

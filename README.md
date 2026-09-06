@@ -6,12 +6,37 @@ A single-binary resource monitor for tiny Linux boxes, written to run on a
 `6.12.1-msm8916` kernel.
 
 It exists because nginx + PHP + a database is a lot of machine for a board with
-376 MB of RAM. `gomon` is one **5.4 MB static binary** with the dashboard
+376 MB of RAM. `gomon` is one **4.6 MB static binary** with the dashboard
 embedded in it, and it sits at about **9.5 MB RSS**. No web server, no runtime,
 no database, no cgo, and **no third-party Go modules** — everything comes from
 the standard library.
 
-![endpoints: / /api/stats /api/history](https://img.shields.io/badge/deps-stdlib%20only-blue)
+![gomon dashboard](Home.png)
+
+---
+
+## Install — prebuilt
+
+Nothing to build and nothing to install alongside it. On the device:
+
+```bash
+curl -fsSL https://github.com/khamdan/gomon/releases/latest/download/gomon-linux-arm64.tar.gz | tar xz
+sudo gomon-linux-arm64/install.sh
+```
+
+That drops the binary and `gomonctl` in `/usr/local/bin`, installs the systemd
+unit, **enables it at boot and starts it now**, then prints the URL to open —
+`http://<device-ip>:8080`.
+
+Use `gomon-linux-amd64.tar.gz` on a normal PC. To remove it again:
+
+```bash
+sudo gomon-linux-arm64/install.sh uninstall
+```
+
+The service runs as `nobody` with `ProtectSystem=strict`, `NoNewPrivileges`,
+`RestrictAddressFamilies=AF_INET AF_INET6` and `MemoryMax=64M`. It needs no
+privileges — everything it reads is world-readable and `statfs` needs no rights.
 
 ---
 
@@ -35,7 +60,7 @@ from a single `//go:embed`ed `index.html`. Charts are backfilled from
 `/api/history` on load, so a fresh page isn't blank. Timestamps are sent as Unix
 milliseconds and rendered in the **viewer's** timezone, not the server's.
 
-## HTTP endpoints
+### HTTP endpoints
 
 | path | returns |
 |---|---|
@@ -43,7 +68,7 @@ milliseconds and rendered in the **viewer's** timezone, not the server's.
 | `/api/stats` | current snapshot, JSON |
 | `/api/history` | the last 180 samples, JSON |
 
-## Flags
+### Flags
 
 ```
 -listen :8080      address to listen on
@@ -52,7 +77,7 @@ milliseconds and rendered in the **viewer's** timezone, not the server's.
 
 ---
 
-## Build
+## Build it yourself
 
 Go 1.21+. There is nothing to fetch.
 
@@ -60,31 +85,33 @@ Go 1.21+. There is nothing to fetch.
 go build -o gomon .
 ```
 
-On the stick itself this takes a while and pushes ~41 MB into zram swap, so
+On the stick itself this takes about 2m40s and pushes ~41 MB into zram swap, so
 **cross-compiling from a workstation is the nicer route**:
 
 ```bash
-GOOS=linux GOARCH=arm64 go build -ldflags='-s -w' -o gomon-arm64 .
-scp gomon-arm64 user@<stick>:/tmp/gomon
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o gomon .
+scp gomon gomon.service gomonctl install.sh user@<device>:/tmp/gomon-dist/
+ssh user@<device> 'sudo /tmp/gomon-dist/install.sh'
 ```
 
-## Install
+`install.sh` installs whatever sits next to it, so it works the same from a
+release tarball or from your own build.
+
+### Releasing
+
+`.github/workflows/release.yml` builds both architectures and publishes the
+tarballs. Push a tag:
 
 ```bash
-sudo install -m755 gomon      /usr/local/bin/gomon
-sudo install -m755 gomonctl   /usr/local/bin/gomonctl
-sudo install -m644 gomon.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo gomonctl enable          # enable at boot AND start now
+git tag v1.0.0 && git push --tags
 ```
 
-Then browse to `http://<stick-ip>:8080`.
+Asset names carry no version (`gomon-linux-arm64.tar.gz`), which is what keeps
+the `releases/latest/download/` URL above working forever.
 
-The unit runs as `nobody` with `ProtectSystem=strict`, `NoNewPrivileges`,
-`RestrictAddressFamilies=AF_INET AF_INET6` and `MemoryMax=64M`. It needs no
-privileges — everything it reads is world-readable and `statfs` needs no rights.
+---
 
-### gomonctl
+## gomonctl
 
 A thin wrapper over `systemctl` so you don't have to remember the unit name:
 
@@ -96,7 +123,8 @@ gomonctl start | stop | restart | status | enable | disable | logs | rebuild
 `status` prints the URL someone on the LAN would actually type, derived from
 `ip -4 -o addr`. Rather than sleeping a fixed amount after starting, it polls
 `/api/stats` until the server answers — the board is slow enough that a flat
-`sleep 1` is wrong in both directions.
+`sleep 1` is wrong in both directions. `rebuild` expects the source in `~/gomon`
+and is the only verb that does nothing on a binary-only install.
 
 ---
 
