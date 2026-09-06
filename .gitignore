@@ -1,0 +1,6 @@
+# built binary (same name as the module, so it lands here on `go build`)
+/gomon
+
+# cross-compiled artefacts
+gomon-arm64
+*.tar.gz

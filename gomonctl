@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+#
+# gomonctl - start/stop/enable the gomon resource dashboard.
+#
+# A thin wrapper around systemctl so you don't have to remember the unit name
+# or the rebuild dance.  Run it on the stick itself.
+#
+#   gomonctl start | stop | restart | status | enable | disable | logs | rebuild
+#
+# "enable" turns on start-at-boot AND starts it now; "disable" is the mirror.
+
+set -euo pipefail
+
+SERVICE=gomon
+PORT=8080
+SRC="$HOME/gomon"
+BIN=/usr/local/bin/gomon
+
+# Nothing here needs root except the systemctl verbs, so only reach for sudo
+# when we actually are not root.
+SUDO=""
+[ "$(id -u)" -ne 0 ] && SUDO="sudo"
+
+c_ok()   { printf '\033[32m%s\033[0m\n' "$*"; }
+c_err()  { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+c_dim()  { printf '\033[2m%s\033[0m\n' "$*"; }
+
+url() {
+	# Report the address someone on the LAN would actually type.
+	local ip
+	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]; exit}')
+	echo "http://${ip:-localhost}:$PORT"
+}
+
+# Poll the HTTP endpoint rather than sleeping a fixed amount - the board is
+# slow enough that a flat "sleep 1" is sometimes wrong in both directions.
+wait_up() {
+	local i
+	for i in $(seq 1 30); do
+		if curl -fsS -o /dev/null "http://127.0.0.1:$PORT/api/stats" 2>/dev/null; then
+			return 0
+		fi
+		sleep 0.5
+	done
+	return 1
+}
+
+show_status() {
+	if systemctl is-active --quiet "$SERVICE"; then
+		c_ok "gomon is running   $(url)"
+	else
+		c_err "gomon is stopped"
+	fi
+	printf 'boot:  %s\n' "$(systemctl is-enabled "$SERVICE" 2>/dev/null || echo unknown)"
+	local pid mem
+	pid=$(systemctl show -p MainPID --value "$SERVICE" 2>/dev/null || echo 0)
+	if [ "${pid:-0}" -gt 0 ] 2>/dev/null; then
+		mem=$(awk '/VmRSS/{printf "%.1f MB", $2/1024}' "/proc/$pid/status" 2>/dev/null || true)
+		printf 'pid:   %s   %s\n' "$pid" "${mem:-}"
+		printf 'up:    %s\n' "$(systemctl show -p ActiveEnterTimestamp --value "$SERVICE" 2>/dev/null)"
+	fi
+}
+
+usage() {
+	cat <<USAGE
+Usage: $(basename "$0") <command>
+
+  start      start the dashboard now
+  stop       stop it
+  restart    stop + start
+  status     is it running, on what URL, using how much memory
+  enable     start at boot, and start it now
+  disable    stop it, and don't start at boot
+  logs       follow the journal (Ctrl-C to quit)
+  rebuild    recompile from $SRC, reinstall, restart
+
+Dashboard: $(url)
+USAGE
+}
+
+case "${1:-}" in
+start)
+	$SUDO systemctl start "$SERVICE"
+	if wait_up; then c_ok "started   $(url)"; else c_err "started, but not answering on $PORT - try: $(basename "$0") logs"; exit 1; fi
+	;;
+stop)
+	$SUDO systemctl stop "$SERVICE"
+	c_ok "stopped"
+	;;
+restart)
+	$SUDO systemctl restart "$SERVICE"
+	if wait_up; then c_ok "restarted   $(url)"; else c_err "restarted, but not answering on $PORT"; exit 1; fi
+	;;
+status)
+	show_status
+	;;
+enable)
+	$SUDO systemctl enable --now "$SERVICE"
+	if wait_up; then
+		c_ok "enabled at boot and running   $(url)"
+	else
+		c_err "enabled, but not answering on $PORT - try: $(basename "$0") logs"
+		exit 1
+	fi
+	;;
+disable)
+	$SUDO systemctl disable --now "$SERVICE"
+	c_ok "stopped and disabled at boot"
+	;;
+logs)
+	exec journalctl -u "$SERVICE" -f -n 50
+	;;
+rebuild)
+	[ -d "$SRC" ] || { c_err "no source at $SRC"; exit 1; }
+	command -v go >/dev/null || { c_err "go is not installed"; exit 1; }
+	c_dim "building in $SRC (takes ~3 min on this board)..."
+	(cd "$SRC" && go build -trimpath -ldflags="-s -w" -o gomon .)
+	$SUDO install -m 0755 "$SRC/gomon" "$BIN"
+	$SUDO systemctl restart "$SERVICE"
+	if wait_up; then c_ok "rebuilt and restarted   $(url)"; else c_err "rebuilt, but not answering on $PORT"; exit 1; fi
+	;;
+""|-h|--help|help)
+	usage
+	;;
+*)
+	c_err "unknown command: $1"
+	usage >&2
+	exit 2
+	;;
+esac

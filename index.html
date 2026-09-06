@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stick Monitor</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  body { background:#0d1117; }
+  .card { background:#161b22; border:1px solid #21262d; }
+  .stat { font-size:2rem; font-weight:600; line-height:1.1; font-variant-numeric:tabular-nums; }
+  .label { font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; color:#8b949e; }
+  .chart-box { position:relative; height:180px; }
+  .progress { height:.5rem; background:#21262d; }
+  .core-freq { font-size:.7rem; color:#8b949e; font-variant-numeric:tabular-nums; }
+  table { font-variant-numeric:tabular-nums; }
+  .dot { width:.5rem; height:.5rem; border-radius:50%; display:inline-block; }
+  .live  { background:#3fb950; box-shadow:0 0 6px #3fb950; }
+  .stale { background:#f85149; box-shadow:0 0 6px #f85149; }
+</style>
+</head>
+<body>
+<div class="container-fluid py-4" style="max-width:1400px">
+
+  <div class="d-flex flex-wrap justify-content-between align-items-end mb-4 gap-2">
+    <div>
+      <h1 class="h3 mb-1" id="host">—</h1>
+      <div class="label" id="model">—</div>
+    </div>
+    <div class="text-end small text-secondary">
+      <div><span class="dot live" id="dot"></span> <span id="status">connecting…</span></div>
+      <div id="uptime">—</div>
+    </div>
+  </div>
+
+  <!-- top-line numbers -->
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3">
+      <div class="card h-100"><div class="card-body">
+        <div class="label mb-1">CPU</div>
+        <div class="stat text-info"><span id="cpu">0</span><small class="fs-6">%</small></div>
+        <div class="progress mt-2"><div class="progress-bar bg-info" id="cpuBar" style="width:0%"></div></div>
+        <div class="small text-secondary mt-2" id="load">load — — —</div>
+      </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card h-100"><div class="card-body">
+        <div class="label mb-1">Memory</div>
+        <div class="stat text-warning"><span id="mem">0</span><small class="fs-6">%</small></div>
+        <div class="progress mt-2"><div class="progress-bar bg-warning" id="memBar" style="width:0%"></div></div>
+        <div class="small text-secondary mt-2" id="memDetail">—</div>
+      </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card h-100"><div class="card-body">
+        <div class="label mb-1">Network</div>
+        <div class="stat text-success" style="font-size:1.35rem">
+          <div>↓ <span id="rx">0</span></div>
+          <div>↑ <span id="tx">0</span></div>
+        </div>
+        <div class="small text-secondary mt-2" id="netDetail">—</div>
+      </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card h-100"><div class="card-body">
+        <div class="label mb-1">Temperature</div>
+        <div class="stat text-danger"><span id="temp">0</span><small class="fs-6">°C</small></div>
+        <div class="progress mt-2"><div class="progress-bar bg-danger" id="tempBar" style="width:0%"></div></div>
+        <div class="small text-secondary mt-2" id="tempDetail">hottest zone</div>
+      </div></div>
+    </div>
+  </div>
+
+  <!-- charts -->
+  <div class="row g-3 mb-3">
+    <div class="col-lg-6">
+      <div class="card h-100"><div class="card-body">
+        <div class="label mb-2">CPU &amp; Memory · last 6 min</div>
+        <div class="chart-box"><canvas id="chartCpu"></canvas></div>
+      </div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100"><div class="card-body">
+        <div class="label mb-2">Network throughput · last 6 min</div>
+        <div class="chart-box"><canvas id="chartNet"></canvas></div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-4">
+      <div class="card h-100"><div class="card-body">
+        <div class="label mb-3">Per-core load</div>
+        <div id="cores"></div>
+        <div class="label mt-4 mb-2">Thermal zones</div>
+        <div class="chart-box" style="height:130px"><canvas id="chartTemp"></canvas></div>
+      </div></div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card h-100"><div class="card-body">
+        <div class="label mb-3">Storage</div>
+        <div id="disks"></div>
+        <div class="label mt-4 mb-3">Interfaces</div>
+        <div id="ifaces" class="small"></div>
+      </div></div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card h-100"><div class="card-body">
+        <div class="label mb-3">Top processes</div>
+        <div class="table-responsive">
+          <table class="table table-sm table-borderless align-middle mb-0">
+            <thead><tr class="label"><th>PID</th><th>Name</th><th class="text-end">CPU</th><th class="text-end">RSS</th></tr></thead>
+            <tbody id="procs"></tbody>
+          </table>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="text-center text-secondary small mt-4" id="kernel">—</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+const bytes = n => {
+  const u = ['B','KB','MB','GB','TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(n < 10 && i > 0 ? 1 : 0) + ' ' + u[i];
+};
+const rate = n => bytes(n) + '/s';
+const dur = s => {
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return (d ? d + 'd ' : '') + (d || h ? h + 'h ' : '') + m + 'm';
+};
+
+// Chart.js defaults tuned for the dark card background.
+Chart.defaults.color = '#8b949e';
+Chart.defaults.font.size = 10;
+Chart.defaults.animation = false;
+Chart.defaults.plugins.legend.labels.boxWidth = 8;
+Chart.defaults.plugins.legend.labels.usePointStyle = true;
+
+const grid = { color: '#21262d', drawTicks: false };
+const line = (id, datasets, yOpts) => new Chart($(id), {
+  type: 'line',
+  data: { labels: [], datasets },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    elements: { point: { radius: 0 }, line: { borderWidth: 1.5, tension: .3 } },
+    scales: {
+      x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
+      y: Object.assign({ grid, beginAtZero: true }, yOpts)
+    }
+  }
+});
+
+const fill = (c, a) => { const g = c.createLinearGradient(0,0,0,180); g.addColorStop(0,a); g.addColorStop(1,'transparent'); return g; };
+
+const cpuChart = line('chartCpu', [
+  { label:'CPU %',    data:[], borderColor:'#58a6ff', backgroundColor:'rgba(88,166,255,.12)', fill:true },
+  { label:'Memory %', data:[], borderColor:'#d29922', backgroundColor:'rgba(210,153,34,.10)', fill:true }
+], { max: 100, ticks: { callback: v => v + '%' } });
+
+const netChart = line('chartNet', [
+  { label:'Down', data:[], borderColor:'#3fb950', backgroundColor:'rgba(63,185,80,.12)', fill:true },
+  { label:'Up',   data:[], borderColor:'#a371f7', backgroundColor:'rgba(163,113,247,.12)', fill:true }
+], { ticks: { callback: v => bytes(v) + '/s' } });
+
+const tempChart = new Chart($('chartTemp'), {
+  type: 'bar',
+  data: { labels: [], datasets: [{ data: [], backgroundColor:'#f85149', borderRadius: 3, barThickness: 12 }] },
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid, beginAtZero: true, suggestedMax: 90, ticks: { callback: v => v + '°' } },
+      y: { grid: { display: false } }
+    }
+  }
+});
+
+const clock = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+function push(chart, label, values, cap) {
+  chart.data.labels.push(label);
+  values.forEach((v, i) => chart.data.datasets[i].data.push(v));
+  while (chart.data.labels.length > cap) {
+    chart.data.labels.shift();
+    chart.data.datasets.forEach(d => d.data.shift());
+  }
+  chart.update('none');
+}
+
+// Backfill the charts from the server's history so a fresh page load isn't blank.
+fetch('/api/history').then(r => r.json()).then(h => {
+  (h || []).forEach(p => {
+    cpuChart.data.labels.push(clock(p.t));
+    cpuChart.data.datasets[0].data.push(p.cpu);
+    cpuChart.data.datasets[1].data.push(p.mem);
+    netChart.data.labels.push(clock(p.t));
+    netChart.data.datasets[0].data.push(p.rx);
+    netChart.data.datasets[1].data.push(p.tx);
+  });
+  cpuChart.update('none');
+  netChart.update('none');
+}).catch(() => {});
+
+let fails = 0;
+
+async function tick() {
+  try {
+    const s = await (await fetch('/api/stats')).json();
+    fails = 0;
+    $('dot').className = 'dot live';
+    $('status').textContent = 'live · updates every 2s';
+
+    $('host').textContent = s.host;
+    $('model').textContent = s.model;
+    $('kernel').textContent = 'Linux ' + s.kernel + ' · gomon';
+    $('uptime').textContent = 'up ' + dur(s.uptime);
+
+    $('cpu').textContent = s.cpu.toFixed(1);
+    $('cpuBar').style.width = s.cpu + '%';
+    $('load').textContent = 'load ' + s.load.map(v => v.toFixed(2)).join('  ');
+
+    $('mem').textContent = s.memPct.toFixed(1);
+    $('memBar').style.width = s.memPct + '%';
+    $('memDetail').innerHTML = bytes(s.memUsed) + ' / ' + bytes(s.memTotal) +
+      ' · cache ' + bytes(s.memCache) +
+      (s.swapTotal ? '<br>swap ' + bytes(s.swapUsed) + ' / ' + bytes(s.swapTotal) : '');
+
+    let rx = 0, tx = 0;
+    (s.ifaces || []).forEach(i => { rx += i.rx; tx += i.tx; });
+    $('rx').textContent = rate(rx);
+    $('tx').textContent = rate(tx);
+    $('netDetail').textContent = (s.ifaces || []).map(i => i.name).join(', ') || 'no active interface';
+
+    const hottest = (s.temps || []).reduce((a, b) => b.c > a.c ? b : a, { c: 0, name: '—' });
+    $('temp').textContent = hottest.c.toFixed(1);
+    $('tempBar').style.width = Math.min(100, hottest.c / 90 * 100) + '%';
+    $('tempDetail').textContent = hottest.name;
+
+    $('cores').innerHTML = (s.cores || []).map(c => `
+      <div class="mb-2">
+        <div class="d-flex justify-content-between small">
+          <span>${c.name}</span>
+          <span class="core-freq">${c.mhz ? c.mhz + ' MHz' : ''} &nbsp; ${c.pct.toFixed(0)}%</span>
+        </div>
+        <div class="progress"><div class="progress-bar bg-info" style="width:${c.pct}%"></div></div>
+      </div>`).join('');
+
+    $('disks').innerHTML = (s.disks || []).map(d => `
+      <div class="mb-3">
+        <div class="d-flex justify-content-between small">
+          <span>${d.path}</span>
+          <span class="text-secondary">${bytes(d.used)} / ${bytes(d.total)}</span>
+        </div>
+        <div class="progress"><div class="progress-bar ${d.usedPct > 85 ? 'bg-danger' : 'bg-secondary'}" style="width:${d.usedPct}%"></div></div>
+      </div>`).join('');
+
+    $('ifaces').innerHTML = (s.ifaces || []).map(i => `
+      <div class="d-flex justify-content-between border-bottom border-secondary-subtle py-1">
+        <span>${i.name}</span>
+        <span class="text-secondary">↓${bytes(i.rxTotal)} ↑${bytes(i.txTotal)}</span>
+      </div>`).join('') || '<span class="text-secondary">none</span>';
+
+    $('procs').innerHTML = (s.procs || []).map(p => `
+      <tr>
+        <td class="text-secondary">${p.pid}</td>
+        <td class="text-truncate" style="max-width:11rem">${p.name}</td>
+        <td class="text-end ${p.cpu > 20 ? 'text-info' : ''}">${p.cpu.toFixed(1)}%</td>
+        <td class="text-end text-secondary">${bytes(p.rss)}</td>
+      </tr>`).join('');
+
+    tempChart.data.labels = (s.temps || []).map(t => t.name.replace('-thermal', ''));
+    tempChart.data.datasets[0].data = (s.temps || []).map(t => t.c);
+    tempChart.update('none');
+
+    const label = clock(s.time);
+    push(cpuChart, label, [s.cpu, s.memPct], 180);
+    push(netChart, label, [rx, tx], 180);
+  } catch (e) {
+    if (++fails > 2) {
+      $('dot').className = 'dot stale';
+      $('status').textContent = 'disconnected — retrying';
+    }
+  }
+}
+
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

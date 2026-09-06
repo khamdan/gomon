@@ -1,0 +1,27 @@
+[Unit]
+Description=gomon - resource monitor dashboard
+Documentation=https://github.com/khamdan/gomon
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/gomon -listen :8080 -disks /,/boot
+Restart=always
+RestartSec=3
+
+# Runs unprivileged: everything it reads (/proc, /sys/class/thermal) is
+# world-readable, and statfs needs no special rights.
+User=nobody
+Group=nogroup
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target
