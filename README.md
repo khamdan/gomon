@@ -1,15 +1,20 @@
 # gomon
 
-A single-binary resource monitor for tiny Linux boxes, written to run on a
-**JZ01-45-V33 USB 4G modem stick** (Qualcomm MSM8916 / Snapdragon 410, 4 cores
-@ 800 MHz, **376 MB RAM**, 3.96 GB eMMC) running Debian 13 with a
-`6.12.1-msm8916` kernel.
+A single-binary resource monitor for **any Linux machine** — a laptop, a
+desktop, a VPS, a home server, a Raspberry Pi, or a 376 MB USB modem stick. One
+static binary with the dashboard embedded in it, no runtime to install, nothing
+to configure.
 
-It exists because nginx + PHP + a database is a lot of machine for a board with
-376 MB of RAM. `gomon` is one **5.2 MB static binary** with the dashboard
-embedded in it, and it sits at about **9.5 MB RSS**. No web server, no runtime,
-no database, no cgo, and **no third-party Go modules** — everything comes from
-the standard library.
+It is built the way it is because it started life on a **JZ01-45-V33 USB 4G
+modem stick** (Qualcomm MSM8916, 4 cores @ 800 MHz, **376 MB RAM**, 3.96 GB
+eMMC), where nginx + PHP + a database is a lot of machine to ask for. So `gomon`
+is one **5.2 MB static binary** sitting at about **9.5 MB RSS**: no web server,
+no runtime, no database, no cgo, and **no third-party Go modules** — everything
+comes from the standard library.
+
+That makes it comfortable on hardware that has nothing to spare, and it means
+that on a normal PC or server it is a monitoring dashboard you will never notice
+is running.
 
 ![gomon dashboard](Home.png)
 
@@ -17,7 +22,16 @@ the standard library.
 
 ## Install — prebuilt
 
-Nothing to build and nothing to install alongside it. On the device:
+Nothing to build and nothing to install alongside it.
+
+**x86-64 PC, server or VPS:**
+
+```bash
+curl -fsSL https://github.com/khamdan/gomon/releases/latest/download/gomon-linux-amd64.tar.gz | tar xz
+sudo gomon-linux-amd64/install.sh
+```
+
+**ARM64 — Raspberry Pi, SBCs, modem sticks:**
 
 ```bash
 curl -fsSL https://github.com/khamdan/gomon/releases/latest/download/gomon-linux-arm64.tar.gz | tar xz
@@ -26,16 +40,17 @@ sudo gomon-linux-arm64/install.sh
 
 That drops the binary and `gomonctl` in `/usr/local/bin`, installs the systemd
 unit, **enables it at boot and starts it now**, then prints the URL to open —
-`http://<device-ip>:8080`.
+`http://<host-ip>:8080`.
 
-Use `gomon-linux-amd64.tar.gz` on a normal PC.
+The examples below use `gomon-linux-amd64/`; swap in `gomon-linux-arm64/` if
+that is the one you downloaded.
 
 ### A different port
 
 Pass it as the only argument:
 
 ```bash
-sudo gomon-linux-arm64/install.sh 9090
+sudo gomon-linux-amd64/install.sh 9090
 ```
 
 The port is baked into the unit's `ExecStart` as it is installed, so it
@@ -46,13 +61,13 @@ Ports **below 1024** work too. They are privileged and the service runs as
 the unit for you — the narrow grant that allows the bind and nothing else:
 
 ```bash
-sudo gomon-linux-arm64/install.sh 80
+sudo gomon-linux-amd64/install.sh 80
 ```
 
 ### Removing it
 
 ```bash
-sudo gomon-linux-arm64/install.sh uninstall
+sudo gomon-linux-amd64/install.sh uninstall
 ```
 
 The service runs as `nobody` with `ProtectSystem=strict`, `NoNewPrivileges`,
@@ -96,6 +111,12 @@ milliseconds and rendered in the **viewer's** timezone, not the server's.
 -disks /,/boot     comma-separated mount points to report
 ```
 
+The shipped unit runs with `-disks /,/boot`. On a machine where `/boot` isn't
+its own filesystem you'll see it twice — edit `ExecStart` in
+`/etc/systemd/system/gomon.service` to whatever you actually want to watch, say
+`-disks /,/home,/mnt/data`, then `sudo systemctl daemon-reload && gomonctl
+restart`.
+
 ---
 
 ## Build it yourself
@@ -106,17 +127,31 @@ Go 1.21+. There is nothing to fetch.
 go build -o gomon .
 ```
 
-On the stick itself this takes about 2m40s and pushes ~41 MB into zram swap, so
-**cross-compiling from a workstation is the nicer route**:
+Or build the release flavour for either architecture from any machine:
 
 ```bash
+# x86-64
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o gomon .
+
+# ARM64
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o gomon .
-scp gomon gomon.service gomonctl install.sh user@<device>:/tmp/gomon-dist/
-ssh user@<device> 'sudo /tmp/gomon-dist/install.sh'
+```
+
+Then install it locally, or ship it to another box:
+
+```bash
+sudo ./install.sh                                   # right here
+
+scp gomon gomon.service gomonctl install.sh user@<host>:/tmp/gomon-dist/
+ssh user@<host> 'sudo /tmp/gomon-dist/install.sh'   # somewhere else
 ```
 
 `install.sh` installs whatever sits next to it, so it works the same from a
 release tarball or from your own build.
+
+Cross-compiling is worth it for small boards: on the modem stick a native build
+takes about 2m40s and pushes ~41 MB into zram swap. On a PC it's a couple of
+seconds either way.
 
 ### Releasing
 
@@ -127,7 +162,7 @@ tarballs. Push a tag:
 git tag v1.0.0 && git push --tags
 ```
 
-Asset names carry no version (`gomon-linux-arm64.tar.gz`), which is what keeps
+Asset names carry no version (`gomon-linux-amd64.tar.gz`), which is what keeps
 the `releases/latest/download/` URL above working forever.
 
 Running the workflow by hand from the Actions tab is a **dry run**: it builds
@@ -147,15 +182,18 @@ gomonctl start | stop | restart | status | enable | disable | logs | rebuild
 `status` prints the URL someone on the LAN would actually type, derived from
 `ip -4 -o addr`, on whatever port the installed unit says. Rather than sleeping
 a fixed amount after starting, it polls `/api/stats` until the server answers —
-the board is slow enough that a flat `sleep 1` is wrong in both directions.
+a slow board is slow enough that a flat `sleep 1` is wrong in both directions.
 `rebuild` expects the source in `~/gomon`, and is the only verb that does
 nothing on a binary-only install.
 
 ---
 
-## Portability
+## Requirements
 
-The metrics are ordinary Linux `/proc` and `/sys` reads, so this runs on any
-Linux box. The only board-specific thing left in here is the default
-`-disks /,/boot`, which assumes `/boot` is its own partition — it is on this
-stick (`mmcblk0p13`).
+- Linux, x86-64 or ARM64 (other architectures: build it yourself, the code is
+  portable)
+- systemd, for `install.sh` and `gomonctl` — the binary itself is happy being
+  run by hand, by a supervisor, or in a container
+
+Metrics come from ordinary `/proc` and `/sys` reads, so nothing here is tied to
+a particular distro or board.
